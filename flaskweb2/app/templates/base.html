@@ -24,6 +24,14 @@
             <ul class="nav navbar-nav">
                 <li><a href="{{ url_for('main.index') }}">Home</a></li>
             </ul>
+            <ul class="nav navbar-nav navbar-right">
+                <!--current_user由flask_login定义，并且在视图函数和模板中自动可用-->
+                {% if current_user.is_authenticated %}
+                <li><a href="{{ url_for('auth.logout') }}">Log Out</a></li>
+                {% else %}
+                <li><a href="{{ url_for('auth.login') }}">Log In</a></li>
+                {% endif %}
+            </ul>
         </div>
     </div>
 </div>
