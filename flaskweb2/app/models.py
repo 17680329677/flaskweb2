@@ -2,18 +2,71 @@ from . import db
 # Werkzeug中的security模块能方便的计算密码散列值，generate_password_hash函数生成散列值，check_password_hash验证散列值
 from werkzeug.security import generate_password_hash, check_password_hash
 # flask_login专门用来管理用户认证系统中的认证状态 且不依赖特定的认证机制
-from flask_login import UserMixin
+from flask_login import UserMixin, AnonymousUserMixin
 from . import login_manager
 # itsdangerous提供了多种生成令牌的方法，其中TimedJSONWebSignatureSerializer类生成具有过期时间的JSON Web前面
 from itsdangerous import TimedJSONWebSignatureSerializer as Serializer
 from flask import current_app
+from datetime import datetime
+
+
+class Permission:
+    FOLLOW = 0x01   # 关注其他用户
+    COMMENT = 0x02  # 在他人撰写的文章中发布评论
+    WRITE_ARTICLES = 0x04   # 写原创文章
+    MODERATE_COMMENTS = 0x08    # 查处他人发表的不当评论
+    ADMINISTER = 0x80   # 管理员
 
 
 class Role(db.Model):
     __tablename__ = 'roles'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), unique=True)
+    default = db.Column(db.Boolean, default=False, index=True)      # 只有一个角色的default字段设置为True，其他均是False
+    # 位标志 能执行某项操作的角色，其位会被设置为1  用八位二进制表示 只用5位 其他用作扩充
+    permissions = db.Column(db.Integer)
     users = db.relationship('User', backref='role', lazy='dynamic')
+
+    # 添加一个类方法 完成添加用户角色的操作
+    @staticmethod
+    def insert_roles():
+        roles = {
+            'User': (Permission.FOLLOW |
+                     Permission.COMMENT |
+                     Permission.WRITE_ARTICLES, True),
+            'Moderator': (Permission.FOLLOW |
+                          Permission.COMMENT |
+                          Permission.WRITE_ARTICLES |
+                          Permission.MODERATE_COMMENTS, False),
+            'Administrator': (0xff, False)
+        }
+
+        for r in roles:
+            role = Role.query.filter_by(name=r).first()
+            if role is None:
+                role = Role(name=r)
+            role.permissions = roles[r][0]
+            role.default = roles[r][1]
+            db.session.add(role)
+        db.session.commit()
+
+    # 添加权限
+    def add_permission(self, perm):
+        if not self.has_permission(perm):
+            self.permissions += perm
+
+    # 移除权限
+    def remove_permission(self,perm):
+        if self.has_permission(perm):
+            self.permissions -= perm
+
+    # 重置权限
+    def reset_permission(self):
+        self.permissions = 0
+
+    # 判断权限
+    def has_permission(self, perm):
+        return self.permissions & perm == perm
 
     def __repr__(self):
         return '<Role %r>' % self.name
@@ -21,12 +74,26 @@ class Role(db.Model):
 
 class User(db.Model, UserMixin):
     __tablename__ = 'users'
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(64), unique=True, index=True)
-    username = db.Column(db.String(64), unique=True, index=True)
-    password_hash = db.Column(db.String(128))
-    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'))
-    confirmed = db.Column(db.Boolean, default=False)
+    id = db.Column(db.Integer, primary_key=True)    # 用户id
+    email = db.Column(db.String(64), unique=True, index=True)   # email地址
+    username = db.Column(db.String(64), unique=True, index=True)    # 用户名
+    password_hash = db.Column(db.String(128))   # 散列的密码
+    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'))  # 角色id
+    confirmed = db.Column(db.Boolean, default=False)    # 是否确认邮箱
+    name = db.Column(db.String(64))     # 真实姓名
+    location = db.Column(db.String(64))     # 所在地
+    about_me = db.Column(db.Text())     # 自我介绍
+    member_since = db.Column(db.DateTime(), default=datetime.utcnow)    # 注册时间
+    last_seen = db.Column(db.DateTime(), default=datetime.utcnow)   # 上次登录时间
+
+    # 分配角色，当注册邮箱为FLASKY_ADMIN中的邮箱时  分配管理员角色，剩余均分配用户角色
+    def __init__(self, **kwargs):
+        super(User, self).__init__(**kwargs)
+        if self.role is None:
+            if self.email == current_app.config['FLASKY_ADMIN']:
+                self.role = Role.query.filter_by(permissions=0xff).first()
+            if self.role is None:
+                self.role = Role.query.filter_by(default=True).first()
 
     @property
     def password(self):
@@ -102,9 +169,32 @@ class User(db.Model, UserMixin):
         db.session.add(self)
         return True
 
+    # 角色验证 验证用户是否拥有指定的权限
+    def can(self, permissions):
+        return self.role is not None and (self.role.permissions & permissions) == permissions   # 做与操作即可判断
+
+    def is_administrator(self):
+        return self.can(Permission.ADMINISTER)
+
+    # 修改最后登录时间
+    def ping(self):
+        self.last_seen = datetime.utcnow()
+        db.session.add(self)
 
     def __repr__(self):
         return '<User %r>' % self.username
+
+
+# 这个对象继承自flask-login中的AnonymousUserMixin，并将其设置为未登录时的current_user值，这样程序不用先检查用户是否登录，就能自由调用current_user.can()
+class AnonymousUser(AnonymousUserMixin):
+    def can(self, permissions):
+        return False
+
+    def is_administrator(self):
+        return False
+
+
+login_manager.anonymous_user = AnonymousUser
 
 
 # flask_login要求程序实现一个回调函数，使用指定的标识符加载用户，该函数定义如下
