@@ -6,8 +6,9 @@ from flask_login import UserMixin, AnonymousUserMixin
 from . import login_manager
 # itsdangerous提供了多种生成令牌的方法，其中TimedJSONWebSignatureSerializer类生成具有过期时间的JSON Web前面
 from itsdangerous import TimedJSONWebSignatureSerializer as Serializer
-from flask import current_app
+from flask import current_app, request
 from datetime import datetime
+import hashlib
 
 
 class Permission:
@@ -85,6 +86,8 @@ class User(db.Model, UserMixin):
     about_me = db.Column(db.Text())     # 自我介绍
     member_since = db.Column(db.DateTime(), default=datetime.utcnow)    # 注册时间
     last_seen = db.Column(db.DateTime(), default=datetime.utcnow)   # 上次登录时间
+    avatar_hash = db.Column(db.String(32))      # 用于存储用户邮箱地址的hash值 便于获取头像
+    posts = db.relationship('Post', backref='author', lazy='dynamic')
 
     # 分配角色，当注册邮箱为FLASKY_ADMIN中的邮箱时  分配管理员角色，剩余均分配用户角色
     def __init__(self, **kwargs):
@@ -94,6 +97,8 @@ class User(db.Model, UserMixin):
                 self.role = Role.query.filter_by(permissions=0xff).first()
             if self.role is None:
                 self.role = Role.query.filter_by(default=True).first()
+        if self.email is not None and self.avatar_hash is None:
+            self.avatar_hash = self.gravatar_hash()
 
     @property
     def password(self):
@@ -166,6 +171,7 @@ class User(db.Model, UserMixin):
         if self.query.filter_by(email=new_email).first() is not None:
             return False
         self.email = new_email
+        self.avatar_hash = self.gravatar_hash()
         db.session.add(self)
         return True
 
@@ -181,8 +187,31 @@ class User(db.Model, UserMixin):
         self.last_seen = datetime.utcnow()
         db.session.add(self)
 
+    # 生成邮件md5的函数  提取出来为了方便
+    def gravatar_hash(self):
+        return hashlib.md5(self.email.encode('utf-8')).hexdigest()
+
+    # 生成gravatar的URL
+    def gravatar(self, size=100, default='identicon', rating='g'):
+        if request.is_secure:
+            url = 'https://secure.gravatar.com/avatar'
+        else:
+            url = 'https://www.gravatar.com/avatar'
+        hash = self.avatar_hash or self.gravatar_hash()
+        return '{url}/{hash}?s={size}&d={default}&r={rating}'.format(
+            url=url, hash=hash, size=size, default=default, rating=rating)
+
     def __repr__(self):
         return '<User %r>' % self.username
+
+
+# 定义文章数据模型
+class Post(db.Model):
+    __tablename__ = 'posts'
+    id = db.Column(db.Integer, primary_key=True)
+    body = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
+    author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
 
 
 # 这个对象继承自flask-login中的AnonymousUserMixin，并将其设置为未登录时的current_user值，这样程序不用先检查用户是否登录，就能自由调用current_user.can()
