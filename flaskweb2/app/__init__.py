@@ -6,11 +6,13 @@ from flask_moment import Moment
 from flask_sqlalchemy import SQLAlchemy
 from config import Config
 from flask_login import LoginManager
+from flask_pagedown import PageDown
 
 bootstrap = Bootstrap()
 mail = Mail()
 moment = Moment()
 db = SQLAlchemy()
+pagedown = PageDown()
 # flask_login在程序的工厂函数中初始化
 login_manager = LoginManager()
 # LoginManager对象的session_protection属性可以设为None， ‘basic’或‘strong’
@@ -29,6 +31,7 @@ def create_app(config_name):
     moment.init_app(app)
     db.init_app(app)
     login_manager.init_app(app)
+    pagedown.init_app(app)
 
     # 附加路由和自定义的错误页面
 

@@ -6,6 +6,8 @@ from flask_login import UserMixin, AnonymousUserMixin
 from . import login_manager
 # itsdangerous提供了多种生成令牌的方法，其中TimedJSONWebSignatureSerializer类生成具有过期时间的JSON Web前面
 from itsdangerous import TimedJSONWebSignatureSerializer as Serializer
+from markdown import markdown
+import bleach
 from flask import current_app, request
 from datetime import datetime
 import hashlib
@@ -210,8 +212,24 @@ class Post(db.Model):
     __tablename__ = 'posts'
     id = db.Column(db.Integer, primary_key=True)
     body = db.Column(db.Text)
+    # 增加博客内容html字段 将富文本编辑器中的内容转换成html存储 否则需要每次在_post.html中转换
+    body_html = db.Column(db.Text)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+
+    # 此处的含义看书 只要body字段设置了新值，函数就自动被调用
+    @staticmethod
+    def on_changed_body(target, value, oldvalue, initiator):
+        allowed_tags = ['a', 'abbr', 'acronym', 'b', 'blockquote', 'code',
+                        'em', 'i', 'li', 'ol', 'pre', 'strong', 'ul',
+                        'h1', 'h2', 'h3', 'p']
+        target.body_html = bleach.linkify(bleach.clean(
+            markdown(value, output_format='html'),
+            tags=allowed_tags, strip=True))
+
+
+# on_changed_body函数注册在body字段上，是SQLAlchemy“set”事件的监听程序，这意味着只要这实例的body字段设置了新值，函数就被自动调用
+db.event.listen(Post.body, 'set', Post.on_changed_body)
 
 
 # 这个对象继承自flask-login中的AnonymousUserMixin，并将其设置为未登录时的current_user值，这样程序不用先检查用户是否登录，就能自由调用current_user.can()

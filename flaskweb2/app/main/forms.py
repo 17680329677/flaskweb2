@@ -3,6 +3,7 @@ from wtforms import StringField, SubmitField, TextAreaField, BooleanField, Selec
 from wtforms.validators import DataRequired, Length, Email, Regexp
 from wtforms import ValidationError
 from ..models import User, Role
+from flask_pagedown.fields import PageDownField
 
 
 class NameForm(FlaskForm):
@@ -50,7 +51,9 @@ class EditProfileAdminForm(FlaskForm):
 
 # 博客文章表单
 class PostForm(FlaskForm):
-    body = TextAreaField("What's on your mind?", validators=[DataRequired()])
+    # body = TextAreaField("What's on your mind?", validators=[DataRequired()])
+    # 把首页中的多行文本框转换成MarkDown富文本编辑器
+    body = PageDownField("What's on your mind?", validators=[DataRequired()])
     submit = SubmitField('Submit')
 
 
