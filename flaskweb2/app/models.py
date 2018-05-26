@@ -75,6 +75,14 @@ class Role(db.Model):
         return '<Role %r>' % self.name
 
 
+# 关注关联表的模型实现
+class Follow(db.Model):
+    __tablename__ = 'follows'
+    follower_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
+    followed_if = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class User(db.Model, UserMixin):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)    # 用户id
@@ -90,6 +98,16 @@ class User(db.Model, UserMixin):
     last_seen = db.Column(db.DateTime(), default=datetime.utcnow)   # 上次登录时间
     avatar_hash = db.Column(db.String(32))      # 用于存储用户邮箱地址的hash值 便于获取头像
     posts = db.relationship('Post', backref='author', lazy='dynamic')
+    followed = db.relationship('Follow',
+                               foreign_keys=[Follow.follower_id],
+                               backref=db.backref('follower', lazy='joined'),
+                               lazy='dynamic',
+                               cascade='all, delete-orphan')
+    followers = db.relationship('Follow',
+                                foreign_keys=[Follow.followed_id],
+                                backref=db.backref('followed', lazy='joined'),
+                                lazy='dynamic',
+                                cascade='all, delete-orphan')
 
     # 分配角色，当注册邮箱为FLASKY_ADMIN中的邮箱时  分配管理员角色，剩余均分配用户角色
     def __init__(self, **kwargs):
@@ -202,6 +220,25 @@ class User(db.Model, UserMixin):
         hash = self.avatar_hash or self.gravatar_hash()
         return '{url}/{hash}?s={size}&d={default}&r={rating}'.format(
             url=url, hash=hash, size=size, default=default, rating=rating)
+
+    # 关注关系的辅助方法
+    # 关注他人
+    def follow(self, user):
+        if not self.is_following(user):
+            f = Follow(followed=user)
+            self.followed.append(f)
+
+    # 取消关注
+    def unfollow(self, user):
+        f = self.follower.filter_by(followed_id=user.id).first()
+        if f:
+            self.followed.remove(f)
+
+    def is_following(self, user):
+        return self.followed.filter_by(followed_id=user.id).first() is not None
+
+    def is_followed_by(self, user):
+        return self.followers.filter_by(follower_id=user.id).first() is not None
 
     def __repr__(self):
         return '<User %r>' % self.username
