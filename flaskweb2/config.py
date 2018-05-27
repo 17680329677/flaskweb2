@@ -11,6 +11,8 @@ class Config:
     FLASKY_MAIL_SENDER = 'Flasky Admin <laobahepijiu@163.com>'
     FLASKY_ADMIN = 'zyrebecca96@163.com'
     FLASKY_POSTS_PER_PAGE = 20
+    FLASKY_FOLLOWERS_PER_PAGE = 50
+    FLASKY_COMMENTS_PER_PAGE = 30
 
     # 配置类可以定义init_app方法，其参数是程序实例，这个方法中可以执行对当前环境的配置初始化，目前设为空
     @staticmethod

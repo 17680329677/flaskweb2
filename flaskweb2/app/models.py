@@ -79,7 +79,7 @@ class Role(db.Model):
 class Follow(db.Model):
     __tablename__ = 'follows'
     follower_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
-    followed_if = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
+    followed_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -108,6 +108,16 @@ class User(db.Model, UserMixin):
                                 backref=db.backref('followed', lazy='joined'),
                                 lazy='dynamic',
                                 cascade='all, delete-orphan')
+    comments = db.relationship('Comment', backref='author', lazy='dynamic')
+
+    # 自己关注自己 创建函数来更新数据库
+    @staticmethod
+    def add_self_follows():
+        for user in User.query.all():
+            if not user.is_following(user):
+                user.follow(user)
+                db.session.add(user)
+                db.session.commit()
 
     # 分配角色，当注册邮箱为FLASKY_ADMIN中的邮箱时  分配管理员角色，剩余均分配用户角色
     def __init__(self, **kwargs):
@@ -119,6 +129,7 @@ class User(db.Model, UserMixin):
                 self.role = Role.query.filter_by(default=True).first()
         if self.email is not None and self.avatar_hash is None:
             self.avatar_hash = self.gravatar_hash()
+        self.follow(self)       # 用户在注册时默认自己关注自己
 
     @property
     def password(self):
@@ -225,20 +236,25 @@ class User(db.Model, UserMixin):
     # 关注他人
     def follow(self, user):
         if not self.is_following(user):
-            f = Follow(followed=user)
-            self.followed.append(f)
+            f = Follow(follower = self, followed=user)
+            db.session.add(f)
 
     # 取消关注
     def unfollow(self, user):
         f = self.follower.filter_by(followed_id=user.id).first()
         if f:
-            self.followed.remove(f)
+            self.followed.delete(f)
 
     def is_following(self, user):
         return self.followed.filter_by(followed_id=user.id).first() is not None
 
     def is_followed_by(self, user):
         return self.followers.filter_by(follower_id=user.id).first() is not None
+
+    # 获取所关注用户的文章
+    @property
+    def followed_posts(self):
+        return Post.query.join(Follow, Follow.followed_id == Post.author_id).filter(Follow.follower_id == self.id)
 
     def __repr__(self):
         return '<User %r>' % self.username
@@ -253,6 +269,7 @@ class Post(db.Model):
     body_html = db.Column(db.Text)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    comments = db.relationship('Comment', backref='post', lazy='dynamic')
 
     # 此处的含义看书 只要body字段设置了新值，函数就自动被调用
     @staticmethod
@@ -267,6 +284,29 @@ class Post(db.Model):
 
 # on_changed_body函数注册在body字段上，是SQLAlchemy“set”事件的监听程序，这意味着只要这实例的body字段设置了新值，函数就被自动调用
 db.event.listen(Post.body, 'set', Post.on_changed_body)
+
+
+# 用户评论模型定义
+class Comment(db.Model):
+    __tablename__ = 'comments'
+    id = db.Column(db.Integer, primary_key=True)
+    body = db.Column(db.Text)
+    body_html = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
+    disabled = db.Column(db.Boolean)    # 协管员通过此字段禁止不当言论
+    author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    post_id = db.Column(db.Integer, db.ForeignKey('posts.id'))
+
+    @staticmethod
+    def on_changed_body(target, value, oldvalue, initiator):
+        allowed_tags = ['a', 'abbr', 'acronym', 'b', 'code', 'em', 'i',
+                        'strong']
+        target.body_html = bleach.linkify(bleach.clean(
+            markdown(value, output_format='html'),
+            tags=allowed_tags, strip=True))
+
+
+db.event.listen(Comment.body, 'set', Comment.on_changed_body)
 
 
 # 这个对象继承自flask-login中的AnonymousUserMixin，并将其设置为未登录时的current_user值，这样程序不用先检查用户是否登录，就能自由调用current_user.can()
