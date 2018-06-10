@@ -8,9 +8,10 @@ from . import login_manager
 from itsdangerous import TimedJSONWebSignatureSerializer as Serializer
 from markdown import markdown
 import bleach
-from flask import current_app, request
+from flask import current_app, request, url_for
 from datetime import datetime
 import hashlib
+from app.exceptions import ValidationError
 
 
 class Permission:
@@ -251,10 +252,38 @@ class User(db.Model, UserMixin):
     def is_followed_by(self, user):
         return self.followers.filter_by(follower_id=user.id).first() is not None
 
+    # 验证令牌生成
+    def generate_auth_token(self, expiration):
+        s = Serializer(current_app.config['SECRET_KEY'], expires_in=expiration)
+        return s.dumps({'id': self.id}).decode('utf-8')
+
+    # 验证认证令牌函数
+    @staticmethod
+    def verify_auth_token(token):
+        s = Serializer(current_app.config['SECRET_KEY'])
+        try:
+            data = s.loads(token)
+        except:
+            return None
+        return User.query.get(data['id'])
+
     # 获取所关注用户的文章
     @property
     def followed_posts(self):
         return Post.query.join(Follow, Follow.followed_id == Post.author_id).filter(Follow.follower_id == self.id)
+
+    # 把用户对象转换到JSON格式函数
+    def to_json(self):
+        json_user = {
+            'url': url_for('api.get_user', id=self.id, _external=True),
+            'username': self.username,
+            'member_since': self.member_since,
+            'last_seen': self.last_seen,
+            'posts_url': url_for('api.get_user_posts', id=self.id, _external=True),
+            'followed_posts_url': url_for('api.get_user_followed_posts)', id=self.id, _external=True),
+            'post_count': self.posts.count()
+        }
+        return json_user
 
     def __repr__(self):
         return '<User %r>' % self.username
@@ -281,6 +310,27 @@ class Post(db.Model):
             markdown(value, output_format='html'),
             tags=allowed_tags, strip=True))
 
+    # 把博文对象转换到json格式的函数
+    def to_json(self):
+        json_post = {
+            'url': url_for('api.get_post', id=self.id, _external=True),
+            'body': self.body,
+            'body_html': self.body_html,
+            'timestamp': self.timestamp,
+            'author_url': url_for('api.get_user', id=self.author_id, _external=True),
+            'comments_url': url_for('api.get_post_comments', id=self.id, _external=True),
+            'comments_count': self.comments.count()
+        }
+        return json_post
+
+    # 从json数据格式创建一篇博客博文
+    @staticmethod
+    def from_json(json_post):
+        body = json_post.get('body')
+        if body is None or body == '':
+            raise ValidationError('post does not have a body')
+        return Post(body=body)
+
 
 # on_changed_body函数注册在body字段上，是SQLAlchemy“set”事件的监听程序，这意味着只要这实例的body字段设置了新值，函数就被自动调用
 db.event.listen(Post.body, 'set', Post.on_changed_body)
@@ -304,6 +354,26 @@ class Comment(db.Model):
         target.body_html = bleach.linkify(bleach.clean(
             markdown(value, output_format='html'),
             tags=allowed_tags, strip=True))
+
+    # 把评论模型对象转换到JSON格式
+    def to_json(self):
+        json_comment = {
+            'url': url_for('api.get_comment', id=self.id, _external=True),
+            'post_url': url_for('api.get_post', id=self.post_id, _external=True),
+            'body': self.body,
+            'body_html': self.body_html,
+            'timestamp': self.timestamp,
+            'author_url': url_for('api.get_user', id=self.author_id, _external=True)
+        }
+        return json_comment
+
+    # 根据JSON格式数据创建评论
+    @staticmethod
+    def from_json(json_comment):
+        body = json_comment.get('body')
+        if body is None or body == '':
+            raise ValidationError('comment does not have a body')
+        return Comment(body=body)
 
 
 db.event.listen(Comment.body, 'set', Comment.on_changed_body)
